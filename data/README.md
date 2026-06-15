@@ -6,4 +6,4 @@ Place the NASA C-MAPSS FD004 files in this directory before running the app:
 - `test_FD004.txt`
 - `RUL_FD004.txt`
 
-The dataset files are not included in this public source-code repository.
+In the current course-submission workspace, these files are already present.

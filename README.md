@@ -2,6 +2,8 @@
 
 This repository contains the source code for a Streamlit-based visualization app for remaining useful life (RUL) prediction and failure-mechanism simulation under coupled environmental stresses.
 
+中文说明见 [README_zh.md](README_zh.md).
+
 The implementation uses the NASA C-MAPSS FD004 turbofan degradation dataset as the experimental data source and combines:
 
 - LightGBM-based RUL prediction
@@ -12,7 +14,7 @@ The implementation uses the NASA C-MAPSS FD004 turbofan degradation dataset as t
 
 ## Repository Scope
 
-This public repository contains only the simulation program source code and usage instructions. Course reports, presentation slides, generated paper figures, runtime logs, and local deployment details are intentionally excluded.
+This course-project repository contains the simulation program, the experiment paper, the presentation slides, and the supporting figures used for submission.
 
 ## Requirements
 
@@ -46,7 +48,7 @@ data/
 └── RUL_FD004.txt
 ```
 
-The dataset files are not included in this public repository.
+For the current course submission snapshot, the FD004 files are already placed in `data/`.
 
 ## Run
 
@@ -70,6 +72,22 @@ streamlit run app.py \
 
 The first visit loads data and trains the models. Later interactions reuse the cached pipeline.
 
+## Build Paper and Slides
+
+Compile the course paper:
+
+```bash
+cd paper
+xelatex -interaction=nonstopmode -halt-on-error paper.tex
+```
+
+Compile the presentation slides:
+
+```bash
+cd slide
+xelatex -interaction=nonstopmode -halt-on-error presentation.tex
+```
+
 ## Features
 
 1. **Weibull Reliability Simulation**  
@@ -87,14 +105,25 @@ The first visit loads data and trains the models. Later interactions reuse the c
 5. **Model Metrics**  
    Inspect RMSE, MAE, R², ±20-cycle accuracy, and PHM08 score.
 
+6. **SHAP Model Interpretation**  
+   Inspect global feature importance and dependency plots for the coupled model.
+
 ## Project Structure
 
 ```text
 course_simulation/
 ├── app.py              # Streamlit app entry point
 ├── requirements.txt    # Python dependencies
+├── README_zh.md        # Chinese project guide
+├── SUBMISSION_CHECKLIST.md
 ├── data/
-│   └── README.md       # Dataset placement instructions
+│   ├── README.md       # Dataset placement instructions
+│   ├── train_FD004.txt
+│   ├── test_FD004.txt
+│   └── RUL_FD004.txt
+├── paper/              # Course paper source and PDF
+├── slide/              # Presentation source, PDF, and notes
+├── scripts/            # Figure-generation helpers
 ├── src/
 │   ├── __init__.py
 │   └── engine.py       # Simulation and modeling pipeline

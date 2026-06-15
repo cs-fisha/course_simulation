@@ -11,6 +11,7 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 from scipy.stats import weibull_min
+import pandas as pd
 
 _cjk_paths = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -44,9 +45,9 @@ def main():
     with st.spinner("正在加载数据并训练模型（首次约15秒）..."):
         pipe = get_pipeline()
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "Weibull可靠性仿真", "退化状态演化", "RUL预测对比",
-        "蒙特卡洛寿命仿真", "模型评估指标"
+        "蒙特卡洛寿命仿真", "模型评估指标", "SHAP模型解释"
     ])
 
     with tab1:
@@ -59,6 +60,8 @@ def main():
         render_monte_carlo_tab(pipe)
     with tab5:
         render_metrics_tab(pipe)
+    with tab6:
+        render_shap_section(pipe)
 
 
 def render_weibull_tab(pipe):
@@ -317,6 +320,86 @@ def render_metrics_tab(pipe):
     c1, c2 = st.columns(2)
     c1.metric("协同加速效应占比", f"{synergy:.0f}%")
     c2.metric("拮抗效应占比", f"{antagonism:.0f}%")
+
+
+def render_shap_section(pipe):
+    st.subheader("SHAP模型解释")
+    st.markdown("使用真实 SHAP 结果解释多应力耦合模型的预测依据。")
+
+    with st.spinner("正在计算 SHAP 解释结果（首次可能稍慢）..."):
+        art = pipe.compute_shap_analysis(sample_size=200, background_size=150)
+
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        top_n = st.slider("显示前 N 个特征", 5, 20, 10)
+        sample_idx = st.slider("样本索引", 0, len(art["X"]) - 1, 0)
+
+    shap_values = art["shap_values"]
+    X = art["X"]
+    feat_imp = art["feature_importance"].head(top_n)
+    dep_feat = pipe.shap_dependence_feature()
+    dep_idx = art["X"].columns.get_loc(dep_feat)
+
+    with col2:
+        fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+
+        ax = axes[0]
+        y = np.arange(len(feat_imp))[::-1]
+        ax.barh(y, feat_imp["mean_abs_shap"].values[::-1], color="#8e44ad", alpha=0.85)
+        ax.set_yticks(y)
+        ax.set_yticklabels(feat_imp["feature"].values[::-1], fontsize=9)
+        ax.set_xlabel("平均 |SHAP|")
+        ax.set_title("全局特征重要性（Top-N）")
+        ax.grid(True, axis="x", alpha=0.25)
+
+        ax = axes[1]
+        color_val = X.iloc[:, dep_idx]
+        ax.scatter(color_val, shap_values[:, dep_idx], c=color_val, cmap="coolwarm", s=22, alpha=0.75)
+        ax.axhline(0, color="k", ls="--", lw=1, alpha=0.4)
+        ax.set_xlabel(dep_feat)
+        ax.set_ylabel("SHAP值")
+        ax.set_title(f"依赖图：{dep_feat}")
+        ax.grid(True, alpha=0.25)
+
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+
+    st.markdown("**SHAP结果说明**")
+    st.markdown("""
+    - 左图看的是“整体上谁更重要”，数值越大，说明该特征对模型输出影响越大。
+    - 右图看的是“这个特征取不同值时，预测会怎么变”，点在 0 上方表示让预测 RUL 变大，0 下方表示让预测 RUL 变小。
+    - 这里的 SHAP 是对当前训练好的 LightGBM 耦合模型直接计算得到的，不是手工写死的静态示意图。
+    """)
+
+    st.dataframe(
+        art["group_importance"].style.format({"mean_abs_shap": "{:.4f}", "share": "{:.2%}"}),
+        width="stretch"
+    )
+
+    local = pd.DataFrame({
+        "feature": X.columns,
+        "value": X.iloc[sample_idx].values,
+        "shap": shap_values[sample_idx],
+    })
+    local["abs_shap"] = local["shap"].abs()
+    local = local.sort_values("abs_shap", ascending=False).head(top_n)
+
+    fig, ax = plt.subplots(figsize=(10, max(4, top_n * 0.34)))
+    colors = np.where(local["shap"].values >= 0, "#2ca25f", "#de2d26")
+    y = np.arange(len(local))[::-1]
+    ax.barh(y, local["shap"].values[::-1], color=colors[::-1], alpha=0.85)
+    ax.axvline(0, color="k", lw=1, alpha=0.5)
+    ax.set_yticks(y)
+    ax.set_yticklabels(local["feature"].values[::-1], fontsize=9)
+    ax.set_xlabel("SHAP值")
+    ax.set_title(f"局部解释：样本 {sample_idx} 的主要贡献特征")
+    ax.grid(True, axis="x", alpha=0.25)
+    plt.tight_layout()
+    st.pyplot(fig)
+    plt.close()
+
+    st.caption(f"当前依赖图特征: {dep_feat}；局部解释样本索引: {sample_idx}")
 
 
 if __name__ == "__main__":

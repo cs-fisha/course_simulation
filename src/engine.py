@@ -11,6 +11,7 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.cluster import KMeans
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 import lightgbm as lgb
+import shap
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -374,6 +375,7 @@ class SimulationPipeline:
         self.single_models = {}
         self.coupled_model = None
         self.hmm = None
+        self.shap_artifacts = None
         self._trained = False
 
     def load_and_train(self):
@@ -476,6 +478,86 @@ class SimulationPipeline:
         samples = weibull_min.rvs(sh, loc=lc, scale=adjusted_scale, size=n_samples,
                                   random_state=42)
         return samples.clip(10, 1000)
+
+    def _shap_feature_groups(self):
+        groups = {
+            "退化趋势": lambda c: c.endswith("_ma") or c.endswith("_sd"),
+            "应力主效应": lambda c: c in {"alt_n", "mach_n", "tra_n"},
+            "应力交互": lambda c: c in {"alt_x_mach", "mach_x_tra", "alt_x_tra", "triple"},
+            "交叉项": lambda c: c.endswith("_xa") or c.endswith("_xm"),
+            "退化速率": lambda c: c.endswith("_slope"),
+            "累积退化": lambda c: c.endswith("_cumdev"),
+            "全局状态": lambda c: c in {"HI", "cycle_n"},
+        }
+        return groups
+
+    def compute_shap_analysis(self, sample_size=250, background_size=200):
+        """计算耦合模型的真实 SHAP 解释结果。"""
+        if self.shap_artifacts is not None:
+            return self.shap_artifacts
+        if self.coupled_model is None or self.coupled_model.model is None:
+            raise RuntimeError("耦合模型尚未训练，无法计算 SHAP。")
+
+        test_last = self.test_df.groupby("unit").last().reset_index()
+        test_last = test_last[self.coupled_feats].fillna(0).copy()
+        sample_size = min(sample_size, len(test_last))
+        bg_size = min(background_size, len(self.train_df))
+        rng = np.random.RandomState(42)
+        sample_idx = rng.choice(len(test_last), size=sample_size, replace=False)
+        bg_idx = rng.choice(len(self.train_df), size=bg_size, replace=False)
+
+        X = test_last.iloc[sample_idx].reset_index(drop=True)
+        background = self.train_df.iloc[bg_idx][self.coupled_feats].fillna(0).copy()
+
+        explainer = shap.TreeExplainer(
+            self.coupled_model.model,
+            data=background,
+            feature_perturbation="interventional"
+        )
+        shap_values = explainer.shap_values(X, check_additivity=False)
+        if isinstance(shap_values, list):
+            shap_values = shap_values[0]
+
+        abs_mean = np.abs(shap_values).mean(axis=0)
+        total = abs_mean.sum() or 1e-12
+        importance = abs_mean / total
+        feat_df = pd.DataFrame({
+            "feature": self.coupled_feats,
+            "mean_abs_shap": abs_mean,
+            "importance": importance,
+        }).sort_values("mean_abs_shap", ascending=False).reset_index(drop=True)
+
+        group_rows = []
+        groups = self._shap_feature_groups()
+        for name, fn in groups.items():
+            mask = [fn(c) for c in self.coupled_feats]
+            val = abs_mean[mask].sum() if any(mask) else 0.0
+            group_rows.append({
+                "group": name,
+                "mean_abs_shap": val,
+                "share": val / total,
+            })
+        group_df = pd.DataFrame(group_rows).sort_values("mean_abs_shap", ascending=False)
+
+        self.shap_artifacts = {
+            "explainer": explainer,
+            "X": X,
+            "background": background,
+            "shap_values": shap_values,
+            "expected_value": explainer.expected_value,
+            "feature_importance": feat_df,
+            "group_importance": group_df,
+        }
+        return self.shap_artifacts
+
+    def shap_top_features(self, n=10):
+        art = self.compute_shap_analysis()
+        return art["feature_importance"].head(n)
+
+    def shap_dependence_feature(self):
+        art = self.compute_shap_analysis()
+        feat_df = art["feature_importance"]
+        return feat_df["feature"].iloc[0]
 
     @property
     def unit_ids(self):
